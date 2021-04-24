@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "WebBrowser.h"
 #include "Engine/DataTable.h"
+#include "CacheEngineSubsystem.h"
 #include "TycoonWebBrowser.generated.h"
 
 DECLARE_LOG_CATEGORY_EXTERN(LogInternalWebBrowser, Log, All);
@@ -35,12 +36,19 @@ class DTTYCOON_API UTycoonWebBrowser : public UWebBrowser
 public:
 	// must be lower case
 	UPROPERTY(BlueprintReadOnly, EditAnywhere) TArray<FString> WhitelistedURLs;
-	// the url must equal the key (including trailing /), must be lower case
-	UPROPERTY(BlueprintReadOnly, EditAnywhere) UDataTable* WebpageURLsExact;
-	// the url must contain the row name, must be lower case, useful for files needed on multiple sites
-	UPROPERTY(BlueprintReadOnly, EditAnywhere) UDataTable* WebpageURLsMatch;
-	// page to show if not found, must be lower case
-	UPROPERTY(BlueprintReadOnly, EditAnywhere) FName PageNotFoundURL;
+
+	// page to show if not found, relative to web root, must be lower case, extension required
+	UPROPERTY(BlueprintReadOnly, EditAnywhere) FString PageNotFoundURL;
+
+	// relative to content folder. the url must equal the file path relative to WebRootDirectory, extension not required, must be lower case
+	UPROPERTY(BlueprintReadOnly, EditAnywhere) FString WebRootDirectory = "HTML/web/";
+	// relative to content folder. the url must contain the file path relative to WebMatchDirectory, extension not required, must be lower case, useful for files needed on multiple sites
+	UPROPERTY(BlueprintReadOnly, EditAnywhere) FString WebMatchDirectory = "HTML/match/";
+	// if a directory is specified like test.com/, load the page for test.com/{this}
+	UPROPERTY(BlueprintReadOnly, EditAnywhere) FString DefaultPageForDirectory = "index";
+	
+	UFUNCTION(BlueprintCallable) static UCacheEngineSubsystem* GetCacheSubsystem();
+	UFUNCTION(BlueprintCallable) static void ClearCache(bool bIncludeWebMatch = true);
 	
 	// bind non permanent uobjects here
 	UPROPERTY(BlueprintAssignable) FPageLoadStarted PageLoadStarted_Event;
