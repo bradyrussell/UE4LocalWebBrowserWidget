@@ -42,8 +42,10 @@ public:
 
 	// relative to content folder. the url must equal the file path relative to WebRootDirectory, extension not required, must be lower case
 	UPROPERTY(BlueprintReadOnly, EditAnywhere) FString WebRootDirectory = "HTML/web/";
-	// relative to content folder. the url must contain the file path relative to WebMatchDirectory, extension not required, must be lower case, useful for files needed on multiple sites
+	// relative to content folder. the url must contain the file path relative to WebMatchDirectory, extension required, must be lower case, useful for files needed on multiple sites
 	UPROPERTY(BlueprintReadOnly, EditAnywhere) FString WebMatchDirectory = "HTML/match/";
+	// relative to content folder. the template tag must contain the file path relative to WebTemplateDirectory, extension not required, must be lower case, useful for html needed on multiple pages
+	UPROPERTY(BlueprintReadOnly, EditAnywhere) FString WebTemplateDirectory = "HTML/template/";
 	// if a directory is specified like test.com/, load the page for test.com/{this}
 	UPROPERTY(BlueprintReadOnly, EditAnywhere) FString DefaultPageForDirectory = "index";
 	
@@ -63,6 +65,9 @@ public:
 	UFUNCTION(BlueprintNativeEvent) bool OnLoadURL(const FString& Method, const FString& Url, FString&  Response);
 
 	UFUNCTION(BlueprintNativeEvent) TMap<FString, UObject*> GetObjectsForPage(const FString& Protocol, const FString& Address);
+	
+	// template tag <!--{NAME}-->
+	bool ParseTemplates(FString& PageContent);
 
 	void BindObjectsForPage();
 protected:

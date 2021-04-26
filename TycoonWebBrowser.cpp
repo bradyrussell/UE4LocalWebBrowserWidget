@@ -129,6 +129,7 @@ bool UTycoonWebBrowser::OnLoadURL_Implementation(const FString& Method, const FS
 						FString OutPath = FPaths::Combine(ParentDirectory, OutFile);
 						if (FPaths::FileExists(OutPath)) {
 							if (FFileHelper::LoadFileToString(Response, *OutPath)) {
+								if (!ParseTemplates(Response)) { UE_LOG(LogInternalWebBrowser, Display, TEXT("Failed to parse templates for URL: %s"), *Url); }
 								if (CacheSubsystem)
 									CacheSubsystem->WebRootCache.Add(Address, Response);
 								UE_LOG(LogInternalWebBrowser, Display, TEXT("Loaded file from disk for URL: %s from file %s"), *Url, *OutPath);
@@ -150,7 +151,13 @@ bool UTycoonWebBrowser::OnLoadURL_Implementation(const FString& Method, const FS
 
 		if (FPaths::DirectoryExists(WebMatchDir)) {
 			TArray<FString> MatchFileNames;
-			IFileManager::Get().FindFilesRecursive(MatchFileNames, *WebMatchDir, TEXT("*"), true, false);
+			if(CacheSubsystem && CacheSubsystem->MatchFileNameCache.Num() > 0) {
+				MatchFileNames = CacheSubsystem->MatchFileNameCache;
+			} else {
+				IFileManager::Get().FindFilesRecursive(MatchFileNames, *WebMatchDir, TEXT("*"), true, false);
+				if(CacheSubsystem) CacheSubsystem->MatchFileNameCache = MatchFileNames;
+			}
+			
 			//UE_LOG(LogInternalWebBrowser, Warning, TEXT("Search for match file yielded %d results: %s"), MatchFileNames.Num(), *WebMatchDir);
 			for (auto OutFile : MatchFileNames) {
 				FString ParentDirectory, Filename, Extension;
@@ -161,6 +168,7 @@ bool UTycoonWebBrowser::OnLoadURL_Implementation(const FString& Method, const FS
 					UE_LOG(LogInternalWebBrowser, Warning, TEXT("Match file : %s, %s"), *Address, *OutFile);
 					if (FPaths::FileExists(OutFile)) {
 						if (FFileHelper::LoadFileToString(Response, *OutFile)) {
+							if (!ParseTemplates(Response)) { UE_LOG(LogInternalWebBrowser, Display, TEXT("Failed to parse templates for URL: %s"), *Url); }
 							if (CacheSubsystem)
 								CacheSubsystem->WebMatchCache.Add(SearchKey, Response);
 							UE_LOG(LogInternalWebBrowser, Display, TEXT("Loaded file from disk for URL: %s from file %s"), *Url, *OutFile);
@@ -176,6 +184,7 @@ bool UTycoonWebBrowser::OnLoadURL_Implementation(const FString& Method, const FS
 	}
 	else { UE_LOG(LogInternalWebBrowser, Warning, TEXT("WebMatchDirectory is not set!")); }
 
+	// todo cache failed urls?
 	//do error page
 	if (!ErrorPageDir.IsEmpty()) {
 		if (CacheSubsystem && CacheSubsystem->WebRootCache.Contains(PageNotFoundURL)) {
@@ -186,19 +195,18 @@ bool UTycoonWebBrowser::OnLoadURL_Implementation(const FString& Method, const FS
 		else {
 			if (FPaths::FileExists(ErrorPageDir)) {
 				if (FFileHelper::LoadFileToString(Response, *ErrorPageDir)) {
+					if (!ParseTemplates(Response)) { UE_LOG(LogInternalWebBrowser, Display, TEXT("Failed to parse templates for URL: %s"), *Url); }
 					if (CacheSubsystem)
 						CacheSubsystem->WebRootCache.Add(PageNotFoundURL, Response);
 					UE_LOG(LogInternalWebBrowser, Display, TEXT("Loaded file from disk for error page URL: %s from file %s"), *Url, *ErrorPageDir);
 					return true;
 				}
 				UE_LOG(LogInternalWebBrowser, Warning, TEXT("Failed to load file: %s"), *ErrorPageDir);
-			} else {
-				UE_LOG(LogInternalWebBrowser, Warning, TEXT("File does not exist: %s"), *ErrorPageDir);
 			}
+			else { UE_LOG(LogInternalWebBrowser, Warning, TEXT("File does not exist: %s"), *ErrorPageDir); }
 		}
-	} else {
-		UE_LOG(LogInternalWebBrowser, Warning, TEXT("No error page was set or the web root directory does not exist."), *ErrorPageDir);
 	}
+	else { UE_LOG(LogInternalWebBrowser, Warning, TEXT("No error page was set or the web root directory does not exist."), *ErrorPageDir); }
 
 	Response = "This page could not be found, and an error page was not set.";
 	UE_LOG(LogInternalWebBrowser, Warning, TEXT("URL not found in whitelist or database and error page URL was not set: %s"), *Url);
@@ -206,6 +214,79 @@ bool UTycoonWebBrowser::OnLoadURL_Implementation(const FString& Method, const FS
 }
 
 TMap<FString, UObject*> UTycoonWebBrowser::GetObjectsForPage_Implementation(const FString& Protocol, const FString& Address) { return TMap<FString, UObject*>(); }
+
+bool UTycoonWebBrowser::ParseTemplates(FString& PageContent) {
+	UCacheEngineSubsystem* CacheSubsystem = GetCacheSubsystem();
+
+	TArray<FString> CachedKeys;
+	if (CacheSubsystem) {
+		CacheSubsystem->WebTemplateCache.GetKeys(CachedKeys);
+
+		for (auto OutKey : CachedKeys) {
+			if (PageContent.Contains(OutKey)) {
+				UE_LOG(LogInternalWebBrowser, Warning, TEXT("Match cached template file : %s"), *OutKey);
+
+				FString Content = *CacheSubsystem->WebTemplateCache.Find(OutKey);
+				PageContent.ReplaceInline(*OutKey, *Content);
+				UE_LOG(LogInternalWebBrowser, Display, TEXT("Loaded template file from cache: %s"), *OutKey);
+				continue;
+			}
+		}
+	}
+
+	if (!WebTemplateDirectory.IsEmpty()) {
+		const FString WebTemplateDir = FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectContentDir(), WebTemplateDirectory));
+		
+		if (FPaths::DirectoryExists(WebTemplateDir)) {
+			TArray<FString> TemplateFileNames;
+			if(CacheSubsystem && CacheSubsystem->TemplateFileNameCache.Num() > 0) {
+				TemplateFileNames = CacheSubsystem->TemplateFileNameCache;
+			} else {
+				IFileManager::Get().FindFilesRecursive(TemplateFileNames, *WebTemplateDir, TEXT("*"), true, false);
+				if(CacheSubsystem) CacheSubsystem->TemplateFileNameCache = TemplateFileNames;
+			}
+			
+			for (auto OutFile : TemplateFileNames) {
+				FString ParentDirectory, Filename, Extension;
+				FPaths::Split(OutFile, ParentDirectory, Filename, Extension);
+				auto SearchKeyWithExtension = "<!--{" + Filename + "." + Extension + "}-->"; // todo should include directories after template Root
+				auto SearchKeyWithoutExtension = "<!--{" + Filename + "}-->";
+
+				if (CachedKeys.Contains(SearchKeyWithExtension) || CachedKeys.Contains(SearchKeyWithoutExtension))
+					continue;
+
+				if (PageContent.Contains(SearchKeyWithExtension) || PageContent.Contains(SearchKeyWithoutExtension)) {
+					UE_LOG(LogInternalWebBrowser, Warning, TEXT("Match template file : %s"), *OutFile);
+					if (FPaths::FileExists(OutFile)) {
+						FString TemplateContents;
+						if (FFileHelper::LoadFileToString(TemplateContents, *OutFile)) {
+							auto Key = PageContent.Contains(SearchKeyWithExtension) ? SearchKeyWithExtension : SearchKeyWithoutExtension;
+							if (CacheSubsystem) { CacheSubsystem->WebTemplateCache.Add(Key, TemplateContents); }
+							PageContent.ReplaceInline(*Key, *TemplateContents);
+							UE_LOG(LogInternalWebBrowser, Display, TEXT("Loaded template file %s"), *OutFile);
+							continue;
+						}
+						UE_LOG(LogInternalWebBrowser, Warning, TEXT("Failed to load file: %s"), *OutFile);
+						return false;
+					}
+					else {
+						UE_LOG(LogInternalWebBrowser, Warning, TEXT("File does not exist: %s"), *OutFile);
+						return false;
+					}
+				}
+			}
+		}
+		else {
+			UE_LOG(LogInternalWebBrowser, Warning, TEXT("WebTemplateDirectory %s does not exist!"), *WebTemplateDir);
+			return false;
+		}
+	}
+	else {
+		UE_LOG(LogInternalWebBrowser, Warning, TEXT("WebTemplateDirectory is not set!"));
+		return false;
+	}
+	return true;
+}
 
 void UTycoonWebBrowser::BindObjectsForPage() {
 	if (!WebBrowserWidget)
